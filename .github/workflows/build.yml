@@ -164,13 +164,33 @@ jobs:
           path: resources/sidecar
           key: engine-${{ env.ENGINE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
 
-      # 优先复用测试阶段下载好的引擎（同一次 run 内的 artifact，稳定）
+      # 优先复用测试阶段下载好的引擎（同一次 run 内的 artifact，稳定）。
+      #
+      # 刻意先解到暂存目录再「搜出来归位」，而不是直接解到 resources/sidecar：
+      # upload-artifact v4 保留的是相对工作区的路径，直接解到目标目录会变成
+      # resources/sidecar/resources/sidecar/... 这样多一层，导致后面找不到二进制
+      # （实测就卡在这里：artifact 取回成功，但 ls resources/sidecar/*/openlist* 落空）。
       - name: 取回测试阶段的引擎
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: engine-${{ runner.os }}
-          path: resources/sidecar
+          path: engine-dl
+
+      - name: 归位引擎
+        shell: bash
+        run: |
+          found="$(find engine-dl -type f \( -name 'openlist' -o -name 'openlist.exe' \) 2>/dev/null | head -1 || true)"
+          if [ -z "$found" ]; then
+            echo "暂存目录里没有引擎，交给下一步重新下载"
+            exit 0
+          fi
+          sub="$(basename "$(dirname "$found")")"
+          echo "找到 $found -> resources/sidecar/$sub/"
+          mkdir -p "resources/sidecar/$sub"
+          cp -f "$found" "resources/sidecar/$sub/"
+          chmod +x "resources/sidecar/$sub/"* 2>/dev/null || true
+          ls -la "resources/sidecar/$sub"
 
       # 打包必须要有引擎：缺了会打出一个跑不起来的安装包，所以这一步不允许失败
       - name: 拉取引擎
