@@ -2,7 +2,7 @@
   "name": "panhub",
   "version": "0.1.0",
   "description": "跨平台网盘聚合下载器 —— 一次登录，50+ 网盘统一下载",
-  "main": "./out/main/index.js",
+  "main": "./out/main/index.cjs",
   "license": "MIT",
   "private": true,
   "type": "module",

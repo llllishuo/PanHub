@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -71,12 +71,17 @@ test('账号持久化 + 静态加密 + 重启免重登', { skip: SKIP }, async (
       remark: 'persistence test',
     });
     assert.equal((await svc1.listMounts()).length, 1);
-    assert.ok(existsSync(join(engineDir, 'config.json')), '运行期应有明文配置');
+    // 新架构：明文只存在于一次性会话目录，永久目录里绝不该出现引擎数据
+    assert.ok(
+      !existsSync(engineDir),
+      '永久数据目录里出现了引擎明文数据（应只存在于临时会话目录）',
+    );
     await svc1.dispose();
 
-    // ---------- 停机后：明文必须消失，密文进保险箱 ----------
-    assert.ok(!existsSync(join(engineDir, 'config.json')), '停机后明文 config.json 未清除');
-    assert.ok(!existsSync(join(engineDir, 'data.db')), '停机后明文 data.db 未清除');
+    // ---------- 停机后：密文进保险箱 ----------
+    // 会话目录清不掉是设计允许的（Windows 上杀软/索引器可能仍持有句柄），
+    // 契约是「下次启动必然清扫」，在下一次会话处验证。
+    const leftover = (await readdir(tmpdir())).filter((n) => n.startsWith('panhub-engine-'));
 
     const raw = await readFile(join(appData, 'vault.json'), 'utf8');
     assert.ok(!raw.includes('root_folder_path'), '挂载配置明文泄漏到磁盘');
@@ -85,6 +90,12 @@ test('账号持久化 + 静态加密 + 重启免重登', { skip: SKIP }, async (
     // ---------- 第二次会话（模拟重启）：不应要求重新登录 ----------
     const svc2 = makeService(appData, keyStore);
     await svc2.startEngine();
+
+    // 启动时清扫上一轮遗留的会话目录
+    if (leftover.length > 0) {
+      const stillStale = leftover.filter((n) => existsSync(join(tmpdir(), n)));
+      assert.deepEqual(stillStale, [], `旧会话目录未被清扫：${stillStale.join(',')}`);
+    }
     const mounts = await svc2.listMounts();
     assert.equal(mounts.length, 1, '重启后挂载丢失 —— 等于要用户重新登录');
     assert.equal(mounts[0].mount_path, '/persist');

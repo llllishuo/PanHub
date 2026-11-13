@@ -59,7 +59,7 @@ test('找不到引擎二进制时给出明确错误码', async () => {
 });
 
 test('真实启动引擎：健康检查通过、配置落盘正确、能干净停止', { skip: !HAS_BIN }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'panhub-engine-'));
+  const dir = await mkdtemp(join(tmpdir(), 'panhub-sc-test-'));
   const sc = new OpenListSidecar({ binPath: BIN, dataDir: dir });
   try {
     const info = await sc.start(60_000);
@@ -101,7 +101,7 @@ test('真实启动引擎：健康检查通过、配置落盘正确、能干净�
 });
 
 test('重启复用 jwt_secret，token 不会被动失效', { skip: !HAS_BIN }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'panhub-engine-'));
+  const dir = await mkdtemp(join(tmpdir(), 'panhub-sc-test-'));
   const sc1 = new OpenListSidecar({ binPath: BIN, dataDir: dir });
   let secret1 = '';
   try {
@@ -132,7 +132,7 @@ test('重启复用 jwt_secret，token 不会被动失效', { skip: !HAS_BIN }, a
  * 正确做法是先 POST /api/public/init/setup 完成初始化。
  */
 test('陷阱回归：未初始化时 admin set 静默无效，初始化后才生效', { skip: !HAS_BIN }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'panhub-engine-'));
+  const dir = await mkdtemp(join(tmpdir(), 'panhub-sc-test-'));
   const sc = new OpenListSidecar({ binPath: BIN, dataDir: dir });
   try {
     // 先起一次让数据库建表
