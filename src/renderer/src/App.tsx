@@ -10,7 +10,8 @@ import TitleBar from './components/TitleBar.tsx';
 import Sidebar from './components/Sidebar.tsx';
 import FileBrowser from './components/FileBrowser.tsx';
 import JobQueue from './components/JobQueue.tsx';
-import AddDriveDialog from './components/AddDriveDialog.tsx';
+import AddDriveDialog, { type DrivePrefill } from './components/AddDriveDialog.tsx';
+import ShareDialog from './components/ShareDialog.tsx';
 import { ToastHost, toast, toastError } from './components/Toast.tsx';
 
 export default function App() {
@@ -22,6 +23,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [prefill, setPrefill] = useState<DrivePrefill | null>(null);
   const pathRef = useRef(path);
   pathRef.current = path;
 
@@ -180,6 +183,7 @@ export default function App() {
         status={status}
         busy={busy}
         onAdd={() => void openAddDialog()}
+        onShare={() => setShareOpen(true)}
         onRefresh={() => void refreshAll()}
         onStartEngine={onStartEngine}
       />
@@ -237,8 +241,24 @@ export default function App() {
       {dialogOpen && catalog && (
         <AddDriveDialog
           catalog={catalog}
-          onClose={() => setDialogOpen(false)}
+          initial={prefill ?? undefined}
+          onClose={() => {
+            setDialogOpen(false);
+            setPrefill(null);
+          }}
           onAdded={() => void refreshAll()}
+        />
+      )}
+
+      {shareOpen && (
+        <ShareDialog
+          onClose={() => setShareOpen(false)}
+          onUse={(r) => {
+            if (!r.driver) return;
+            setPrefill({ driver: r.driver, values: r.addition });
+            setShareOpen(false);
+            void openAddDialog();
+          }}
         />
       )}
 

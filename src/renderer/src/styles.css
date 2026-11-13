@@ -1158,3 +1158,89 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ---------------- 分享链接解析 ---------------- */
+
+.dialog.narrow {
+  width: min(620px, 100%);
+}
+
+.mono,
+.share-val.mono {
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: 12px;
+}
+
+.share-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 13px 15px;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.share-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 12.5px;
+}
+.share-key {
+  width: 62px;
+  flex-shrink: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.share-val {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  word-break: break-all;
+}
+.share-val code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-2);
+  font-size: 11px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.badge-line {
+  padding: 8px 11px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  line-height: 1.6;
+  border: 1px solid transparent;
+}
+.badge-line code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.09);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11.5px;
+}
+.badge-line.ok {
+  background: rgba(52, 211, 153, 0.1);
+  border-color: rgba(52, 211, 153, 0.24);
+  color: #a7f3d0;
+}
+.badge-line.warn {
+  background: rgba(251, 191, 36, 0.1);
+  border-color: rgba(251, 191, 36, 0.24);
+  color: #fcd34d;
+}
+.badge-line.error {
+  background: rgba(248, 113, 113, 0.1);
+  border-color: rgba(248, 113, 113, 0.24);
+  color: #fca5a5;
+}
+
+.share-note {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--text-3);
+}

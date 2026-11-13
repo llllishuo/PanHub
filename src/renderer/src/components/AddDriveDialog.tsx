@@ -1,13 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DriverCatalog, DriverDef, DriverField } from '../types.ts';
 import { driverLabel } from '../types.ts';
 import { bridge, humanError } from '../lib/bridge.ts';
 import { toast, toastError } from './Toast.tsx';
 
+/** 从分享链接解析结果预填 */
+export interface DrivePrefill {
+  driver: string;
+  values: Record<string, string>;
+}
+
 interface Props {
   catalog: DriverCatalog;
   onClose: () => void;
   onAdded: () => void;
+  /** 预填（例如来自分享链接解析） */
+  initial?: DrivePrefill;
 }
 
 /** 敏感字段：默认遮起来，可切换显示 */
@@ -88,9 +96,10 @@ function FieldInput({
   );
 }
 
-export default function AddDriveDialog({ catalog, onClose, onAdded }: Props) {
+export default function AddDriveDialog({ catalog, onClose, onAdded, initial }: Props) {
+  const seed = useRef<DrivePrefill | undefined>(initial);
   const [query, setQuery] = useState('');
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(initial?.driver ?? null);
   const [mountPath, setMountPath] = useState('');
   const [remark, setRemark] = useState('');
   const [values, setValues] = useState<Record<string, string>>({});
@@ -114,12 +123,13 @@ export default function AddDriveDialog({ catalog, onClose, onAdded }: Props) {
 
   const def: DriverDef | null = picked ? (catalog[picked] ?? null) : null;
 
-  // 选中驱动后初始化表单默认值
+  // 选中驱动后初始化表单默认值（分享预填的字段优先）
   useEffect(() => {
     if (!picked || !def) return;
     const init: Record<string, string> = {};
     for (const f of def.additional) init[f.name] = f.default ?? '';
-    setValues(init);
+    const seeded = seed.current && seed.current.driver === picked ? seed.current.values : {};
+    setValues({ ...init, ...seeded });
     setMountPath((p) => p || `/${picked.replace(/[^\w]+/g, '-').toLowerCase()}`);
     setAdvanced(false);
   }, [picked, def]);

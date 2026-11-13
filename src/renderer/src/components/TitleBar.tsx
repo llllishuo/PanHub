@@ -3,12 +3,20 @@ import type { EngineStatus } from '../types.ts';
 interface Props {
   status: EngineStatus | null;
   onAdd: () => void;
+  onShare: () => void;
   onRefresh: () => void;
   onStartEngine: () => void;
   busy: boolean;
 }
 
-export default function TitleBar({ status, onAdd, onRefresh, onStartEngine, busy }: Props) {
+export default function TitleBar({
+  status,
+  onAdd,
+  onShare,
+  onRefresh,
+  onStartEngine,
+  busy,
+}: Props) {
   const running = status?.engineRunning ?? false;
   return (
     <header className="titlebar">
@@ -31,6 +39,9 @@ export default function TitleBar({ status, onAdd, onRefresh, onStartEngine, busy
       )}
       <button className="btn ghost sm" onClick={onRefresh} disabled={!running}>
         刷新
+      </button>
+      <button className="btn ghost sm" onClick={onShare} disabled={!running}>
+        🔗 分享链接
       </button>
       <button className="btn sm" onClick={onAdd} disabled={!running}>
         ＋ 添加网盘
