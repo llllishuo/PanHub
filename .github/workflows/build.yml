@@ -11,8 +11,9 @@ permissions:
   contents: read
 
 env:
-  # 引擎二进制 111 MB 不入库，每个 job 自行拉取
+  # 引擎二进制 111 MB 不入库，每个 job 自行拉取（有缓存）
   ENGINE_ARCH_SCRIPT: scripts/fetch_engine.py
+  ENGINE_VERSION: v4.2.9
 
 jobs:
   # ---------------------------------------------------------------
@@ -48,13 +49,26 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      # 引擎 37 MB，从 GitHub Releases 拉。CI 上偶发网络抖动不该把整个测试判红：
-      # 拿不到就跳过依赖引擎的用例（测试本身会 skip 并计数），但要在日志里警告。
+      - name: 缓存引擎
+        uses: actions/cache@v4
+        with:
+          path: resources/sidecar
+          key: engine-${{ env.ENGINE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      # 拿不到引擎就跳过依赖引擎的用例（测试会 skip 并计数），
+      # 不要把整条测试判红 —— 但日志里要能看见。
       - name: 拉取引擎
-        id: engine
         continue-on-error: true
         shell: bash
-        run: python "$ENGINE_ARCH_SCRIPT"
+        run: |
+          if ls resources/sidecar/*/openlist* >/dev/null 2>&1; then
+            echo "缓存命中，跳过下载"; exit 0
+          fi
+          for i in 1 2 3; do
+            python "$ENGINE_ARCH_SCRIPT" && exit 0
+            echo "第 $i 次失败，10 秒后重试"; sleep 10
+          done
+          exit 1
 
       - name: 引擎是否就绪
         shell: bash
@@ -70,9 +84,12 @@ jobs:
         run: node --test --test-force-exit "test/**/*.test.ts"
 
   # ---------------------------------------------------------------
-  # 打包：每个平台各出一个安装包。
-  # electronDist 指向本地解压的 Electron，因此只能打宿主架构的包，
-  # 所以 macOS 用两个 runner 分别出 x64 / arm64。
+  # 打包：每个平台各出安装包。
+  #
+  # 关于 macOS：不再使用 macos-13(Intel) —— 那个 runner 极度稀缺，
+  # 实测排队 30 分钟以上仍未分配，会把整个 run 卡在 queued。
+  # 改为在 macos-latest(arm64) 上一次性跨架构产出 x64 + arm64 两个 dmg，
+  # 这也是 electron-builder.yml 里移除 electronDist 的原因。
   # ---------------------------------------------------------------
   package:
     name: package / ${{ matrix.label }}
@@ -84,19 +101,15 @@ jobs:
         include:
           - os: windows-latest
             label: windows-x64
-            flag: --win
+            flag: --win --x64
             artifacts: release/*.exe
-          - os: macos-13        # Intel
-            label: macos-x64
-            flag: --mac
-            artifacts: release/*.dmg
-          - os: macos-14        # Apple Silicon
-            label: macos-arm64
-            flag: --mac
+          - os: macos-latest
+            label: macos
+            flag: --mac --x64 --arm64
             artifacts: release/*.dmg
           - os: ubuntu-latest
             label: linux-x64
-            flag: --linux
+            flag: --linux --x64
             artifacts: |
               release/*.AppImage
               release/*.deb
@@ -119,10 +132,35 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      # electron-builder 会从 GitHub 下载 NSIS / 7zip / fpm 等工具，
+      # 直连偶发 ECONNRESET。缓存下来避免每次重下，重试兜住抖动。
+      - name: 缓存 electron-builder 工具
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron-builder
+            ~/AppData/Local/electron-builder/Cache
+            ~/Library/Caches/electron-builder
+          key: eb-tools-${{ runner.os }}-${{ hashFiles('electron-builder.yml') }}
+
+      - name: 缓存引擎
+        uses: actions/cache@v4
+        with:
+          path: resources/sidecar
+          key: engine-${{ env.ENGINE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
       # 打包必须要有引擎：缺了会打出一个跑不起来的安装包，所以这一步不允许失败
       - name: 拉取引擎
         shell: bash
-        run: python "$ENGINE_ARCH_SCRIPT"
+        run: |
+          if ls resources/sidecar/*/openlist* >/dev/null 2>&1; then
+            echo "缓存命中，跳过下载"; exit 0
+          fi
+          for i in 1 2 3; do
+            python "$ENGINE_ARCH_SCRIPT" && exit 0
+            echo "第 $i 次失败，10 秒后重试"; sleep 10
+          done
+          exit 1
 
       - name: 构建应用
         run: pnpm build
@@ -132,7 +170,16 @@ jobs:
         env:
           # 没有证书，跳过 macOS 签名探测（否则会因找不到证书而报错）
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder ${{ matrix.flag }} --publish never
+        run: |
+          for i in 1 2 3; do
+            if npx electron-builder ${{ matrix.flag }} --publish never; then
+              exit 0
+            fi
+            echo "第 $i 次打包失败，15 秒后重试"
+            sleep 15
+          done
+          echo "::error::打包连续 3 次失败"
+          exit 1
 
       - name: 产物清单
         shell: bash

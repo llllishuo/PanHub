@@ -128,15 +128,27 @@ pnpm build                # 先产出 out/
 npx electron-builder --win   # 再打包
 ```
 
-> **国内网络注意**：electron-builder 会从 GitHub 下载 NSIS / 7zip 等工具，
+> **国内网络注意**：electron-builder 会从 GitHub 下载 NSIS / 7zip / fpm 等工具，
 > 直连常被 `ECONNRESET` 打断。设置镜像即可：
 >
 > ```bash
 > ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 > ```
->
-> 另外配置里已设 `electronDist: node_modules/electron/dist`，
-> 复用本地已解压的 Electron，避免重复下载 200+ MB。
+
+**关于 `electronDist`**：配置里**故意不设**它。一旦指向 `node_modules/electron/dist`，
+就只能打宿主架构的包——CI 需要在一个 macOS runner 上同时产出 x64 与 arm64，
+那样会直接失败。
+
+本地想省掉 200+ MB 下载时，在命令行覆盖即可（`pnpm dist:win` 等脚本已内置）：
+
+```bash
+npx electron-builder --win --config.electronDist=node_modules/electron/dist
+```
+
+| 脚本 | 用途 |
+|---|---|
+| `pnpm dist:win` / `dist:mac` / `dist:linux` | 本地打包，复用本地 Electron |
+| `pnpm dist:ci` | CI 用，让 electron-builder 自行下载对应架构 |
 
 ### 构建实测（Windows 10 / x64）
 
@@ -149,11 +161,10 @@ npx electron-builder --win   # 再打包
 | 启动已安装版本 | ✅ 引擎就绪 |
 | 静默卸载 `/S` | ✅ 退出码 0，目录清空 |
 
-**未验证的部分（需要对应宿主）**：
-- **macOS 包必须在 macOS 上构建**（签名 + 公证无法交叉编译）
-- Linux 包建议在 Linux 或 Docker 中构建
+**未验证的部分**：
 - 未配置代码签名证书，安装包会触发 SmartScreen / Gatekeeper 提示
 - 未设置应用图标，当前使用 Electron 默认图标
+- macOS 产物未做公证（需要 Apple 开发者账号）
 
 ### 持续集成：三平台构建
 
@@ -162,9 +173,17 @@ npx electron-builder --win   # 再打包
 1. **test** —— ubuntu / windows / macos 三平台各跑一遍全部测试。
    这是必要的：测试里有大量路径与文件锁逻辑（Windows 的 EBUSY、会话目录清理、
    路径分隔符），只在 Linux 上跑会漏掉真实平台差异。
-2. **package** —— 四个 runner 各出一个安装包：
-   `windows-latest`(x64) / `macos-13`(x64) / `macos-14`(arm64) / `ubuntu-latest`(x64)，
+2. **package** —— 三个 runner 各出安装包：
+   `windows-latest`(x64) / `macos-latest`(x64 + arm64) / `ubuntu-latest`(x64)，
    产物作为 artifact 上传。
+
+**为什么 macOS 只用一个 runner**：原先用 `macos-13`(Intel) + `macos-14`(arm64)
+两个 runner，实测 `macos-13` 排队 30 分钟以上仍未分配，直接把整个 run 卡在
+`queued`（各 job 早已跑完，run 状态却不结束）。现在改为在 `macos-latest` 上
+一次性跨架构打出两个 dmg —— 这也是必须移除 `electronDist` 的原因。
+
+**稳定性措施**：引擎与 electron-builder 的工具链都做 `actions/cache`，
+下载步骤与打包步骤各有 3 次重试。CI 上偶发的 `ECONNRESET` 不该把构建判红。
 
 macOS 分两个 runner，是因为配置里 `electronDist` 指向本地解压的 Electron，
 只能打宿主架构的包——写死 `arch: [x64, arm64]` 会去做跨架构打包然后失败。

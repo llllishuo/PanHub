@@ -15,9 +15,13 @@ files:
 asar: true
 npmRebuild: false
 
-# 复用 node_modules 里已解压好的 Electron，避免重新下载 200+ MB。
-# 注意：这也意味着**只能打宿主架构的包**——跨架构要换对应 runner。
-electronDist: node_modules/electron/dist
+# 这里**不设** electronDist：
+# 一旦指向 node_modules/electron/dist，就只能打宿主架构的包，跨架构必失败。
+# CI 需要在一个 macOS runner 上同时产出 x64 与 arm64，所以让 electron-builder
+# 自己去下载对应架构的 Electron。
+#
+# 本地想省掉 200+ MB 下载时，在命令行覆盖即可：
+#   npx electron-builder --win --config.electronDist=node_modules/electron/dist
 
 # 引擎二进制 111 MB，必须放在 asar 之外。
 # CI 里每个 runner 只会拉取自己平台的引擎目录，因此这里整目录拷进去即可，
