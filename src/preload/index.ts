@@ -15,7 +15,22 @@ export interface PanhubApi {
   }>;
   startEngine(): Promise<{ url: string }>;
   stopEngine(): Promise<{ ok: boolean }>;
-  drivers(): Promise<Record<string, { name?: string; local_sort?: boolean }>>;
+  drivers(): Promise<
+    Record<
+      string,
+      {
+        name?: string;
+        local_sort?: boolean;
+        only_proxy?: boolean;
+        default_root?: string;
+        alert?: string;
+        /** 通用字段定义（mount_path / order / remark） */
+        common?: unknown[];
+        /** 驱动专属字段定义（cookie / token / root_folder_path …） */
+        additional?: unknown[];
+      }
+    >
+  >;
   mounts(): Promise<
     { id: number; mount_path: string; driver: string; status: string; remark?: string }[]
   >;

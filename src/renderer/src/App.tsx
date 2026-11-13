@@ -1,346 +1,248 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-type Status = {
-  engineRunning: boolean;
-  engineUrl: string | null;
-  initialized: boolean;
-  accounts: number;
-};
-type Mount = { id: number; mount_path: string; driver: string; status: string; remark?: string };
-type FsItem = { name: string; size: number; is_dir: boolean; modified: string };
-type Job = {
-  id: string;
-  name: string;
-  destPath: string;
-  total: number;
-  downloaded: number;
-  percent: number;
-  speedBps: number;
-  status: string;
-  error?: string;
-};
-type Driver = { name?: string };
+import type { DriverCatalog, EngineStatus, FsItem, Mount } from './types.ts';
+import { driverLabel } from './types.ts';
+import { bridge, humanError } from './lib/bridge.ts';
+import { initJobStore } from './lib/jobs.ts';
+import { joinPath, parentPath } from './lib/format.ts';
 
-function fmtSize(n: number): string {
-  if (!n) return '0 B';
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
-  return `${(n / 1024 ** i).toFixed(i === 0 ? 0 : 1)} ${u[i]}`;
-}
-
-function fmtSpeed(n: number): string {
-  return n > 0 ? `${fmtSize(n)}/s` : '—';
-}
+import TitleBar from './components/TitleBar.tsx';
+import Sidebar from './components/Sidebar.tsx';
+import FileBrowser from './components/FileBrowser.tsx';
+import JobQueue from './components/JobQueue.tsx';
+import AddDriveDialog from './components/AddDriveDialog.tsx';
+import { ToastHost, toast, toastError } from './components/Toast.tsx';
 
 export default function App() {
-  const [status, setStatus] = useState<Status | null>(null);
+  const [status, setStatus] = useState<EngineStatus | null>(null);
   const [mounts, setMounts] = useState<Mount[]>([]);
-  const [cwd, setCwd] = useState('/');
+  const [catalog, setCatalog] = useState<DriverCatalog | null>(null);
+  const [path, setPath] = useState('/');
   const [items, setItems] = useState<FsItem[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [drivers, setDrivers] = useState<string[]>([]);
-  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  // 添加网盘表单
-  const [driver, setDriver] = useState('Local');
-  const [mountPath, setMountPath] = useState('/mydisk');
-  const [addition, setAddition] = useState('{\n  "root_folder_path": ""\n}');
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const pathRef = useRef(path);
+  pathRef.current = path;
 
   const refreshStatus = useCallback(async () => {
     try {
-      setStatus(await window.panhub.status());
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, []);
-
-  const refreshMounts = useCallback(async () => {
-    try {
-      setMounts(await window.panhub.mounts());
+      setStatus(await bridge.status());
     } catch {
       /* 引擎未就绪时忽略 */
     }
   }, []);
 
-  const refreshJobs = useCallback(async () => {
+  const refreshMounts = useCallback(async () => {
     try {
-      setJobs(await window.panhub.jobs());
+      setMounts(await bridge.mounts());
     } catch {
-      /* ignore */
+      setMounts([]);
     }
   }, []);
 
-  const browse = useCallback(async (path: string) => {
+  const browse = useCallback(async (p: string) => {
+    setLoading(true);
+    setPath(p);
     try {
-      setItems(await window.panhub.list(path));
-      setCwd(path);
-      setErr(null);
+      const list = await bridge.list(p);
+      setItems(list);
     } catch (e) {
       setItems([]);
-      setErr(`读取目录失败：${String(e)}`);
+      toastError(humanError(e));
+    } finally {
+      setLoading(false);
     }
   }, []);
 
+  const loadCatalog = useCallback(async () => {
+    try {
+      const c = await bridge.drivers();
+      setCatalog(Object.keys(c).length > 0 ? c : null);
+    } catch {
+      /* 引擎未就绪时留待 engine 事件触发后再取 */
+    }
+  }, []);
+
+  const refreshAll = useCallback(async () => {
+    await refreshStatus();
+    await refreshMounts();
+    await loadCatalog();
+    await browse(pathRef.current);
+  }, [refreshStatus, refreshMounts, loadCatalog, browse]);
+
+  // 首次挂载：订阅任务事件、拉取状态与驱动表
   useEffect(() => {
-    void refreshStatus();
-    void refreshMounts();
-    void refreshJobs();
-    const offJob = window.panhub.onJob((j) => {
-      const job = j as Job;
-      setJobs((prev) => {
-        const i = prev.findIndex((x) => x.id === job.id);
-        if (i < 0) return [job, ...prev];
-        const next = [...prev];
-        next[i] = job;
-        return next;
-      });
-    });
+    const off = initJobStore();
+    void (async () => {
+      await refreshStatus();
+      await refreshMounts();
+      await loadCatalog();
+      await browse('/');
+    })();
+
+    // 引擎就绪后必须重新取一次驱动表 —— 启动早期取到的会是空表
     const offEngine = window.panhub.onEngine(() => {
-      void refreshStatus();
-      void refreshMounts();
-      void browse('/');
+      void refreshAll();
     });
-    const offErr = window.panhub.onEngineError((m) => setErr(`引擎启动失败：${m}`));
-    const offWarn = window.panhub.onWarn((m) => setErr(m));
+    const offErr = window.panhub.onEngineError((m) => toast(`引擎启动失败：${m}`, 'error', 8000));
+    const offWarn = window.panhub.onWarn((m) => toast(m, 'warn', 8000));
+
     return () => {
-      offJob();
+      off();
       offEngine();
       offErr();
       offWarn();
     };
-  }, [refreshStatus, refreshMounts, refreshJobs, browse]);
+  }, [refreshStatus, refreshMounts, loadCatalog, refreshAll, browse]);
 
-  const canUse = status?.engineRunning ?? false;
+  // 键盘快捷操作
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName ?? '';
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        document.getElementById('file-filter')?.focus();
+        return;
+      }
+      if (typing) return;
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        const up = parentPath(pathRef.current);
+        if (up !== pathRef.current) void browse(up);
+      }
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        document.getElementById('file-filter')?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [browse]);
 
   const onStartEngine = async () => {
     setBusy(true);
     try {
-      await window.panhub.startEngine();
-      await refreshStatus();
-      await refreshMounts();
-      await browse('/');
+      await bridge.startEngine();
+      toast('引擎已启动', 'success');
+      await refreshAll();
     } catch (e) {
-      setErr(String(e));
+      toastError(humanError(e));
     } finally {
       setBusy(false);
     }
   };
 
-  const onAddMount = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      JSON.parse(addition); // 提前校验，给用户明确报错
-      await window.panhub.addMount({ mountPath, driver, addition });
-      await refreshMounts();
-      await browse('/');
-    } catch (e) {
-      setErr(`添加失败：${String(e)}`);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const onOpen = useCallback(
+    (p: string) => {
+      // 侧栏传入的是挂载点或 "/"，文件行传入的是名称
+      const target = p.startsWith('/') ? p : joinPath(pathRef.current, p);
+      void browse(target);
+    },
+    [browse],
+  );
 
-  const onRemoveMount = async (id: number) => {
-    try {
-      await window.panhub.removeMount(id);
-      await refreshMounts();
-      await browse('/');
-    } catch (e) {
-      setErr(String(e));
-    }
-  };
-
-  const onDownload = async (item: FsItem) => {
-    const remote = cwd.replace(/\/$/, '') + '/' + item.name;
-    const destDir = await window.panhub.pickFolder();
+  const onDownload = useCallback(async (item: FsItem) => {
+    const remote = joinPath(pathRef.current, item.name);
+    const destDir = await bridge.pickFolder();
     if (!destDir) return;
     try {
-      await window.panhub.download({ remotePath: remote, destDir });
-      await refreshJobs();
+      await bridge.download({ remotePath: remote, destDir });
+      toast(`已加入队列：${item.name}`, 'success');
     } catch (e) {
-      setErr(`下载失败：${String(e)}`);
+      toastError(humanError(e));
+    }
+  }, []);
+
+  const onRemoveMount = async (id: number) => {
+    const m = mounts.find((x) => x.id === id);
+    try {
+      await bridge.removeMount(id);
+      toast(`已移除 ${m ? driverLabel(m.driver).label : '网盘'}`, 'success');
+      await refreshAll();
+    } catch (e) {
+      toastError(humanError(e));
     }
   };
 
-  const crumbs = useMemo(() => {
-    const parts = cwd.split('/').filter(Boolean);
-    const acc = [{ label: '根目录', path: '/' }];
-    let cur = '';
-    for (const p of parts) {
-      cur += '/' + p;
-      acc.push({ label: p, path: cur });
-    }
-    return acc;
-  }, [cwd]);
+  const engineReady = status?.engineRunning ?? false;
+
+  /** 打开添加对话框前确保驱动表已就绪，否则用户会看到一个空列表 */
+  const openAddDialog = useCallback(async () => {
+    if (!catalog) await loadCatalog();
+    setDialogOpen(true);
+  }, [catalog, loadCatalog]);
 
   return (
     <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          PanHub <span className="badge">核心版</span>
-        </div>
-        <div className={`engine ${canUse ? 'ok' : 'off'}`}>
-          <span className="dot" />
-          {canUse ? `引擎运行中 · ${status?.engineUrl}` : '引擎未运行'}
-        </div>
-        {!canUse && (
-          <button className="btn primary" onClick={onStartEngine} disabled={busy}>
-            启动引擎
-          </button>
+      <TitleBar
+        status={status}
+        busy={busy}
+        onAdd={() => void openAddDialog()}
+        onRefresh={() => void refreshAll()}
+        onStartEngine={onStartEngine}
+      />
+
+      <div className="body">
+        <Sidebar
+          mounts={mounts}
+          activePath={path}
+          onOpen={(p) => void browse(p)}
+          onAdd={() => void openAddDialog()}
+          onRemove={onRemoveMount}
+        />
+
+        {!engineReady ? (
+          <div className="hero">
+            <div className="hero-icon">◈</div>
+            <h1>正在准备本地引擎</h1>
+            <p className="muted">
+              首次启动需要初始化引擎与加密保险箱。若长时间无响应，可点下方按钮重试。
+            </p>
+            <button className="btn primary" onClick={onStartEngine} disabled={busy}>
+              {busy ? '启动中…' : '启动引擎'}
+            </button>
+          </div>
+        ) : mounts.length === 0 && path === '/' ? (
+          <div className="hero">
+            <div className="hero-icon">🗂️</div>
+            <h1>连接你的第一个网盘</h1>
+            <p className="muted">
+              支持 {catalog ? Object.keys(catalog).length : 90}+ 种存储后端：百度网盘、阿里云盘、
+              夸克、115、迅雷、天翼、123、微云、OneDrive、Google Drive…
+            </p>
+            <button className="btn primary" onClick={() => setDialogOpen(true)}>
+              选择网盘类型
+            </button>
+            <p className="tiny muted" style={{ marginTop: 18 }}>
+              登录凭据加密保存在本机，下次打开无需重复登录
+            </p>
+          </div>
+        ) : (
+          <FileBrowser
+            path={path}
+            items={items}
+            loading={loading}
+            onOpen={onOpen}
+            onDownload={(it) => void onDownload(it)}
+            onRefresh={() => void browse(pathRef.current)}
+            onBack={() => void browse(parentPath(pathRef.current))}
+          />
         )}
-        <div className="spacer" />
-        <span className="hint">账号数 {status?.accounts ?? 0}</span>
-      </header>
-
-      {err && (
-        <div className="alert">
-          {err}
-          <button onClick={() => setErr(null)}>×</button>
-        </div>
-      )}
-
-      <div className="main">
-        <aside className="sidebar">
-          <h3>已连接的网盘</h3>
-          {mounts.length === 0 && <p className="muted">还没有网盘。添加一个开始。</p>}
-          <ul className="mounts">
-            {mounts.map((m) => (
-              <li key={m.id}>
-                <button className="link" onClick={() => browse(m.mount_path)}>
-                  <span className="mono">{m.mount_path}</span>
-                  <small>{m.driver}</small>
-                </button>
-                <button className="x" title="移除" onClick={() => onRemoveMount(m.id)}>
-                  ×
-                </button>
-              </li>
-            ))}
-          </ul>
-
-          <h3>添加网盘</h3>
-          <label>
-            驱动
-            <input
-              value={driver}
-              onChange={(e) => setDriver(e.target.value)}
-              list="driverlist"
-              placeholder="如 BaiduNetdisk / Aliyundrive / Quark"
-            />
-            <datalist id="driverlist">
-              {drivers.map((d) => (
-                <option key={d} value={d} />
-              ))}
-            </datalist>
-          </label>
-          <label>
-            挂载路径
-            <input value={mountPath} onChange={(e) => setMountPath(e.target.value)} />
-          </label>
-          <label>
-            配置（JSON）
-            <textarea
-              rows={7}
-              value={addition}
-              onChange={(e) => setAddition(e.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <button className="btn" onClick={() => void window.panhub.drivers().then((d) => setDrivers(Object.keys(d).sort()))}>
-            加载驱动列表
-          </button>
-          <button className="btn primary" onClick={onAddMount} disabled={busy || !canUse}>
-            添加
-          </button>
-          <p className="muted tiny">
-            凭据会加密保存在本机，下次启动无需重新登录。详见 DISCLAIMER.md。
-          </p>
-        </aside>
-
-        <section className="content">
-          <nav className="crumbs">
-            {crumbs.map((c) => (
-              <button key={c.path} className="link" onClick={() => browse(c.path)}>
-                {c.label} /
-              </button>
-            ))}
-          </nav>
-          <table className="files">
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th className="num">大小</th>
-                <th className="num">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.length === 0 && (
-                <tr>
-                  <td colSpan={3} className="muted">
-                    {canUse ? '此目录为空' : '引擎未运行'}
-                  </td>
-                </tr>
-              )}
-              {items.map((it) => (
-                <tr key={it.name}>
-                  <td>
-                    {it.is_dir ? (
-                      <button className="link" onClick={() => browse(cwd.replace(/\/$/, '') + '/' + it.name)}>
-                        📁 {it.name}
-                      </button>
-                    ) : (
-                      <>📄 {it.name}</>
-                    )}
-                  </td>
-                  <td className="num">{it.is_dir ? '—' : fmtSize(it.size)}</td>
-                  <td className="num">
-                    {!it.is_dir && (
-                      <button className="btn tiny" onClick={() => onDownload(it)}>
-                        下载
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
       </div>
 
-      <footer className="jobs">
-        <h3>下载任务</h3>
-        {jobs.length === 0 && <p className="muted">暂无任务</p>}
-        {jobs.map((j) => (
-          <div key={j.id} className={`job ${j.status}`}>
-            <div className="jobhead">
-              <span className="name">{j.name}</span>
-              <span className="muted">
-                {j.status === 'running'
-                  ? `${j.percent.toFixed(1)}% · ${fmtSpeed(j.speedBps)}`
-                  : j.status === 'done'
-                    ? '已完成'
-                    : j.status === 'failed'
-                      ? `失败：${j.error ?? ''}`
-                      : j.status}
-              </span>
-              {j.status === 'running' && (
-                <button className="x" onClick={() => void window.panhub.cancel(j.id)}>
-                  取消
-                </button>
-              )}
-              {j.status === 'done' && (
-                <button className="link tiny" onClick={() => void window.panhub.reveal(j.destPath)}>
-                  打开位置
-                </button>
-              )}
-            </div>
-            <div className="bar">
-              <div style={{ width: `${Math.min(100, j.percent)}%` }} />
-            </div>
-          </div>
-        ))}
-      </footer>
+      <JobQueue />
+
+      {dialogOpen && catalog && (
+        <AddDriveDialog
+          catalog={catalog}
+          onClose={() => setDialogOpen(false)}
+          onAdded={() => void refreshAll()}
+        />
+      )}
+
+      <ToastHost />
     </div>
   );
 }

@@ -8,7 +8,7 @@
  *  4. 退出前释放引擎与密钥
  */
 // 主进程以 CJS 输出（见 electron.vite.config.ts 注释），因此可以正常具名导入
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, screen, shell } from 'electron';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
@@ -50,15 +50,27 @@ function broadcast(channel: string, payload: unknown): void {
 }
 
 function createWindow(): void {
+  // 按工作区实际尺寸算窗口大小并显式定位。
+  // 固定像素在 125%/150% 缩放下会超出屏幕，`center: true` 在混合 DPI 下也不可靠，
+  // 因此这里自行计算坐标，并对越界做钳制。
+  const disp = screen.getPrimaryDisplay();
+  const wa = disp.workArea ?? disp.bounds;
+  const width = Math.min(1120, Math.floor(wa.width * 0.9));
+  const height = Math.min(740, Math.floor(wa.height * 0.9));
+  const x = Math.max(wa.x, wa.x + Math.floor((wa.width - width) / 2));
+  const y = Math.max(wa.y, wa.y + Math.floor((wa.height - height) / 2));
+
   win = new BrowserWindow({
-    width: 1180,
-    height: 780,
-    minWidth: 900,
-    minHeight: 600,
+    width,
+    height,
+    x,
+    y,
+    minWidth: Math.min(880, width),
+    minHeight: Math.min(560, height),
     show: false,
     autoHideMenuBar: true,
     title: 'PanHub',
-    backgroundColor: '#0f1115',
+    backgroundColor: '#0a0c11',
     webPreferences: {
       // 不用 import.meta.dirname（CJS 下不存在），统一从 app 根目录推导
       preload: join(app.getAppPath(), 'out', 'preload', 'index.cjs'),
@@ -68,7 +80,15 @@ function createWindow(): void {
     },
   });
 
-  win.once('ready-to-show', () => win?.show());
+  win.once('ready-to-show', () => {
+    // 记录一次实际几何，便于排查不同 DPI 下的显示问题
+    const b = win?.getBounds();
+    console.error(
+      `[panhub] 窗口 ${b?.width}x${b?.height} @ (${b?.x},${b?.y})` +
+        ` 工作区 ${wa.width}x${wa.height} scale=${disp.scaleFactor}`,
+    );
+    win?.show();
+  });
 
   // 外部链接一律交给系统浏览器，不在应用内导航
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -144,12 +164,14 @@ function registerIpc(): void {
   });
 
   // 根目录在没有挂载任何网盘时会返回 500（storage not found），
-  // 这是正常状态，不该当成错误弹给用户。
+  // 引擎未就绪时会抛「引擎尚未启动」——两者都是正常的临时状态，
+  // 一律以空列表回应，不要当成错误弹给用户。
   ipcMain.handle('fs:list', async (_e, path: string) => {
     try {
       return await requireService().browse(path);
     } catch (e) {
       if (e instanceof EngineApiError && e.code === 500) return [];
+      if (/引擎尚未启动/.test((e as Error)?.message ?? '')) return [];
       throw e;
     }
   });

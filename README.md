@@ -59,6 +59,17 @@ src/
 
 Electron 外壳尚未编写。刻意让核心层不依赖 Electron，换来的是：**核心逻辑全部可 headless 验证**，且更换 GUI 框架（Electron / Tauri / Wails）只需重写外壳。
 
+### 界面与交互
+
+- **添加网盘不写 JSON**：引擎为每个驱动返回字段定义（`common` + `additional`，含
+  `type` / `options` / `required` / `help`），界面据此**自动生成表单**——必填项前置、
+  高级项折叠、敏感字段（cookie / token）默认遮蔽可切换显示。93 种存储后端通吃。
+- **键盘操作**：`Ctrl/Cmd+F` 或 `/` 聚焦筛选框，`Backspace` 返回上级，`Esc` 关闭对话框，
+  文件行 `Enter` 打开/下载。
+- **性能**：进度事件先攒批、最多每 150ms 合并提交，并用 `useSyncExternalStore` 让只有
+  任务列表重渲染；文件行用 `content-visibility: auto` 让浏览器跳过屏幕外行的渲染。
+- 支持 `prefers-reduced-motion`，尊重系统的减少动效设置。
+
 ### 安全基线（非可选项）
 
 - 引擎**只绑 `127.0.0.1`**。引擎默认 `0.0.0.0`，那等于把你已登录的全部网盘连同管理接口暴露给整个局域网。
