@@ -177,6 +177,7 @@ jobs:
         id: eng
         shell: bash
         run: |
+          set -o pipefail   # 否则 `python | tee` 的退出码会被 tee 吞掉
           if ls resources/sidecar/*/openlist* >/dev/null 2>&1; then
             echo "已有引擎，跳过下载"; exit 0
           fi
@@ -189,27 +190,33 @@ jobs:
           done
           exit 1
 
-      # 匿名读不到 Actions 日志（API 对 logs 端点要求鉴权），
-      # 但 commit comment 是公开可读的 —— 失败时把关键输出贴上去，
-      # 这是目前唯一能让外部看到真实错误的方式。
-      - name: 失败时上报诊断
+      # Actions 日志对匿名请求是 403，而要写 issue/commit comment 又需要写权限。
+      # 这里把错误的关键片段塞进 artifact **名字** 里 —— artifact 列表是公开可读的，
+      # 于是不需要任何额外权限也能从外部看到真实报错。
+      - name: 采集错误摘要
+        id: err
+        if: failure() && steps.eng.outcome == 'failure'
+        shell: bash
+        run: |
+          {
+            echo "--- python ---"; python -V 2>&1 || true
+            echo "--- curl ---"; command -v curl || true
+            echo "--- ls ---"; ls -la resources 2>&1 || true; ls -la resources/sidecar 2>&1 || true
+            echo "--- log ---"; tail -c 3000 fetch.log 2>/dev/null || echo "(no fetch.log)"
+          } > diag.txt 2>&1
+          MSG="$(grep -viE '^\s*$' diag.txt | tail -c 400 | tr -d '\r' | tr '\n' ' ' \
+                 | tr -cd 'A-Za-z0-9 .:_()\[\]{}=-|' | cut -c1-90)"
+          echo "msg=${MSG:-unknown}" >> "$GITHUB_OUTPUT"
+
+      - name: 上传诊断
         if: failure() && steps.eng.outcome == 'failure'
         continue-on-error: true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "--- 环境 ---" > diag.txt
-          python -V >> diag.txt 2>&1 || true
-          command -v curl >> diag.txt 2>&1 || true
-          curl --version | head -1 >> diag.txt 2>&1 || true
-          echo "--- 引擎脚本输出（末尾 4000 字符）---" >> diag.txt
-          tail -c 4000 fetch.log >> diag.txt 2>/dev/null || echo "(无 fetch.log)" >> diag.txt
-          echo "--- 目录 ---" >> diag.txt
-          ls -la resources 2>&1 >> diag.txt || true
-          ls -la resources/sidecar 2>&1 >> diag.txt || true
-          gh api -X POST "repos/${{ github.repository }}/commits/${{ github.sha }}/comments" \
-            -f body="$(cat diag.txt)" > /dev/null && echo "已提交诊断评论"
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-${{ runner.os }}-${{ steps.err.outputs.msg }}
+          path: diag.txt
+          retention-days: 3
+          if-no-files-found: ignore
 
       - name: 构建应用
         run: pnpm build
