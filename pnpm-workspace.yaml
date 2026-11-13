@@ -1,5 +1,19 @@
-onlyBuiltDependencies:
-  - electron
-  - electron-winstaller
-  - esbuild
-  - '@parcel/watcher'
+# pnpm 12 的构建脚本白名单。
+#
+# 注意：旧键名 onlyBuiltDependencies 在 pnpm 12 中虽仍会被读取，但**不再生效**，
+# 必须用 allowBuilds（包名 → 布尔）。用错键名的表现是 install 直接失败：
+#   Error: ERR_PNPM_IGNORED_BUILDS
+#   ╰─▶ Ignored build scripts: electron-winstaller@5.4.0
+# 这就是 CI 首次运行时三个平台全红的原因 —— 仓库此前从未有过一次干净的
+# pnpm install（本地都是手动绕过的）。
+#
+# 四者缺一不可：
+#   electron            —— 下载 Electron 二进制（electron-builder 的 electronDist 依赖它）
+#   esbuild             —— vite / electron-vite 的构建内核，缺了 pnpm build 直接失败
+#   '@parcel/watcher'   —— 文件监听的原生模块
+#   electron-winstaller —— 打包 Windows 安装器时选择 7-Zip 架构
+allowBuilds:
+  electron: true
+  esbuild: true
+  '@parcel/watcher': true
+  electron-winstaller: true

@@ -17,14 +17,6 @@
     "test": "node --test --test-force-exit test/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.node.json"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "electron-winstaller",
-      "esbuild",
-      "@parcel/watcher"
-    ]
-  },
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
