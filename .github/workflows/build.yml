@@ -42,9 +42,26 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
-      - name: 拉取引擎（让依赖引擎的用例真正执行）
+      # 引擎 37 MB，从 GitHub Releases 拉。CI 上偶发网络抖动不该把整个测试判红：
+      # 拿不到就跳过依赖引擎的用例（测试本身会 skip 并计数），但要在日志里警告。
+      - name: 拉取引擎
+        id: engine
+        continue-on-error: true
         shell: bash
-        run: python3 "$ENGINE_ARCH_SCRIPT" || python "$ENGINE_ARCH_SCRIPT"
+        run: |
+          set -u
+          PY="$(command -v python3 || command -v python)"
+          echo "using: $PY"
+          "$PY" "$ENGINE_ARCH_SCRIPT"
+
+      - name: 引擎是否就绪
+        shell: bash
+        run: |
+          if ls resources/sidecar/*/openlist* >/dev/null 2>&1; then
+            echo "引擎已就绪，依赖引擎的用例将会执行"
+          else
+            echo "::warning::未取到引擎，依赖引擎的用例会被跳过"
+          fi
 
       - name: 运行测试
         shell: bash
@@ -96,9 +113,14 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      # 打包必须要有引擎：缺了会打出一个跑不起来的安装包，所以这一步不允许失败
       - name: 拉取引擎
         shell: bash
-        run: python3 "$ENGINE_ARCH_SCRIPT" || python "$ENGINE_ARCH_SCRIPT"
+        run: |
+          set -u
+          PY="$(command -v python3 || command -v python)"
+          echo "using: $PY"
+          "$PY" "$ENGINE_ARCH_SCRIPT"
 
       - name: 构建应用
         run: pnpm build
