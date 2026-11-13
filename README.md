@@ -30,7 +30,7 @@ GitHub Actions 矩阵构建。为避免误导，逐项如实标注：
 | Electron 主进程 + 界面 | ✅ 已实现 | 启停引擎、添加网盘、浏览、下载队列 |
 | 各网盘登录引导 | 🟡 部分 | 按驱动字段定义自动生成表单；OAuth/扫码引导未做 |
 | 分享链接解析 | ✅ 已验证 | 13 类网盘识别；5 类可解析（见下） |
-| 三平台安装包 | 🟡 部分 | Windows 本机实测全通；macOS / Linux 由 GitHub Actions 矩阵构建（见下） |
+| 三平台安装包 | 🟡 部分 | Windows 本机实测全通；macOS / Linux 由 CI 产出；Windows 的 CI 打包未通过 |
 
 ### 分享链接：能力边界（如实标注）
 
@@ -183,7 +183,30 @@ npx electron-builder --win --config.electronDist=node_modules/electron/dist
 一次性跨架构打出两个 dmg —— 这也是必须移除 `electronDist` 的原因。
 
 **稳定性措施**：引擎与 electron-builder 的工具链都做 `actions/cache`，
-下载步骤与打包步骤各有 3 次重试。CI 上偶发的 `ECONNRESET` 不该把构建判红。
+下载与打包步骤各有多次重试。CI 上偶发的 `ECONNRESET` 不该把构建判红。
+
+#### CI 实测状态（截至最后一次运行）
+
+| 阶段 | 状态 |
+|---|---|
+| test / ubuntu-latest | ✅ 通过 |
+| test / windows-latest | ✅ 通过 |
+| test / macos-latest | ✅ 通过 |
+| package / macos | ✅ 产出 `panhub-macos`(306 MB，含 x64 + arm64 两个 dmg) |
+| package / linux-x64 | ✅ 产出 `panhub-linux-x64`(283.5 MB，AppImage + deb) |
+| package / windows-x64 | ❌ 未通过 |
+
+**Windows 打包在 CI 上未解决**，具体卡点：测试阶段在 Windows runner 上能成功
+下载引擎并「上传引擎」报告成功，但该 run 的 artifact 列表里始终没有
+`engine-Windows`（`engine-macOS` / `engine-Linux` 都正常）；打包阶段因此取不到，
+回退重新下载又失败。
+
+受限于匿名请求无法读取 Actions 日志（logs 端点返回 403），目前只能观察到
+「上传步骤成功但 artifact 不存在」这一现象，尚未定位根因。
+
+**这不影响 Windows 产物的可用性**：Windows 安装包已在本机完整验证
+（构建 → 静默安装 → 启动 → 引擎就绪 → 卸载），命令是 `pnpm dist:win`。
+CI 上的 Windows 打包属于自动化增强，不是功能缺失。
 
 macOS 分两个 runner，是因为配置里 `electronDist` 指向本地解压的 Electron，
 只能打宿主架构的包——写死 `arch: [x64, arm64]` 会去做跨架构打包然后失败。
