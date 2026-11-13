@@ -86,8 +86,11 @@ jobs:
       # 把已下载的引擎作为 artifact 传给打包阶段。
       # 打包 job 里从 GitHub Releases 重新下载在 Windows runner 上连续失败，
       # 而同一份文件在 test job 里是下得下来的 —— 用 artifact 传过去最稳。
+      #
+      # 这里刻意不用 `if: hashFiles(...)` 做门控：hashFiles 在 step 级 if 里的
+      # 求值时机不可靠，一旦判空就等于从没上传过，打包 job 也就无从取回。
+      # 目录不存在时由 if-no-files-found: ignore 兜底即可。
       - name: 上传引擎（供打包复用）
-        if: hashFiles('resources/sidecar/**') != ''
         uses: actions/upload-artifact@v4
         with:
           name: engine-${{ runner.os }}
