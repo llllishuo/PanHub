@@ -1,0 +1,45 @@
+# 依赖
+node_modules/
+.pnpm-store/
+
+# 构建产物
+out/
+dist/
+build/Release/
+*.tsbuildinfo
+
+# 引擎二进制（111 MB，不入库；用 scripts/fetch_engine.py 下载）
+resources/sidecar/
+resources/engine/
+
+# 运行时用户数据 —— 绝对不允许进仓库
+vault.json
+engine/
+data.db
+data.db-wal
+data.db-shm
+config.json
+cookies*.json
+*.part
+*.panhub.json
+downloads/
+
+# 日志与临时文件
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+*.bak
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 环境变量（可能含密钥）
+.env
+.env.*
+!.env.example
