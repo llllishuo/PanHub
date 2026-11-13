@@ -39,6 +39,12 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      # 必须显式装 Python：Windows runner 上 `python3` 可能解析到 Microsoft Store
+      # 的占位程序，`command -v python3` 能查到但一运行就失败。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
@@ -48,11 +54,7 @@ jobs:
         id: engine
         continue-on-error: true
         shell: bash
-        run: |
-          set -u
-          PY="$(command -v python3 || command -v python)"
-          echo "using: $PY"
-          "$PY" "$ENGINE_ARCH_SCRIPT"
+        run: python "$ENGINE_ARCH_SCRIPT"
 
       - name: 引擎是否就绪
         shell: bash
@@ -110,17 +112,17 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
       # 打包必须要有引擎：缺了会打出一个跑不起来的安装包，所以这一步不允许失败
       - name: 拉取引擎
         shell: bash
-        run: |
-          set -u
-          PY="$(command -v python3 || command -v python)"
-          echo "using: $PY"
-          "$PY" "$ENGINE_ARCH_SCRIPT"
+        run: python "$ENGINE_ARCH_SCRIPT"
 
       - name: 构建应用
         run: pnpm build

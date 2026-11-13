@@ -57,4 +57,7 @@ linux:
     - AppImage
     - deb
   category: Utility
+  # deb 目标强制要求 maintainer；package.json 里虽已有 author，
+  # 这里显式写死一份，避免因为 author 结构变化而让 linux 打包突然失败。
+  maintainer: llllishuo <1756524586@qq.com>
   artifactName: ${productName}-${version}-linux-${arch}.${ext}
