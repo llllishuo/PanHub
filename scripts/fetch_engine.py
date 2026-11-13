@@ -1,16 +1,25 @@
 # -*- coding: utf-8 -*-
 """下载并解压 OpenList 引擎二进制到 <仓库根>/resources/sidecar/<platform>-<arch>/
 
-为什么必须落在仓库根而不是 scripts/ 下：
-测试与主进程都按 `resources/sidecar/<platform>-<arch>/openlist[.exe]` 查找。
-早期版本把 HERE 当成输出根，结果引擎被放进 scripts/resources/，
-表现为「CI 上依赖引擎的 12 个用例全部 skipped」——测试看着是通过的，
-实际上最关键的那部分根本没跑。
+两个踩过的坑，都写在这里免得再犯：
+
+1) 输出目录必须是仓库根，不能是 scripts/。
+   测试与主进程都按 `resources/sidecar/<platform>-<arch>/openlist[.exe]` 查找；
+   早期版本把 HERE 当输出根，引擎被放进 scripts/resources/，
+   表现为「依赖引擎的用例全部 skipped」—— 测试看着通过，关键部分根本没跑。
+
+2) 下载优先用 curl，而不是 python urllib。
+   GitHub Actions 的 Windows runner 上 urllib 下载这个 37 MB 的 release 资产
+   会稳定失败（macOS/Linux runner 正常），而 Windows 自带 curl.exe。
+   curl 是各级 runner 上最一致的一条下载路径，urllib 仅作兜底。
 """
 import io
 import os
 import platform
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import zipfile
@@ -29,10 +38,47 @@ BIN_NAME = "openlist.exe" if SYS == "windows" else "openlist"
 
 RETRIES = 3
 TIMEOUT = 300
+CURL = shutil.which("curl") or shutil.which("curl.exe")
 
 
-def download(url: str) -> bytes:
-    """带重试地下载。CI 上偶发 ECONNRESET / 超时不该直接判构建失败。"""
+def _download_with_curl(url: str) -> bytes:
+    """用 curl 下载（优先路径）。"""
+    fd, tmp = tempfile.mkstemp(suffix=".part")
+    os.close(fd)
+    try:
+        for attempt in range(1, RETRIES + 1):
+            proc = subprocess.run(
+                [
+                    CURL, "-fL",
+                    "--retry", "3",
+                    "--retry-delay", "2",
+                    "--connect-timeout", "20",
+                    "--max-time", str(TIMEOUT),
+                    "-o", tmp,
+                    url,
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode == 0:
+                with open(tmp, "rb") as f:
+                    return f.read()
+            print(f"\n[警告] curl 第 {attempt}/{RETRIES} 次失败 (rc={proc.returncode})")
+            err = (proc.stderr or "").strip()
+            if err:
+                print(f"        {err.splitlines()[-1][:200]}")
+            if attempt < RETRIES:
+                time.sleep(3 * attempt)
+        raise RuntimeError("curl 连续失败")
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def _download_with_urllib(url: str) -> bytes:
+    """urllib 兜底（带重试与长度校验）。"""
     last_err = None
     for attempt in range(1, RETRIES + 1):
         try:
@@ -55,14 +101,38 @@ def download(url: str) -> bytes:
             if total and len(data) != total:
                 raise IOError(f"长度不符：收到 {len(data)}，期望 {total}")
             return data
-        except Exception as e:  # noqa: BLE001 - 任何一种网络异常都值得重试
+        except Exception as e:  # noqa: BLE001 - 任何网络异常都值得重试
             last_err = e
-            print(f"\n[警告] 第 {attempt}/{RETRIES} 次下载失败：{type(e).__name__}: {e}")
+            print(f"\n[警告] urllib 第 {attempt}/{RETRIES} 次失败：{type(e).__name__}: {e}")
             if attempt < RETRIES:
-                wait = 3 * attempt
-                print(f"[重试] {wait} 秒后再试…")
-                time.sleep(wait)
-    raise SystemExit(f"[失败] 下载 {url} 连续 {RETRIES} 次失败：{last_err}")
+                time.sleep(3 * attempt)
+    raise RuntimeError(f"urllib 连续失败：{last_err}")
+
+
+def download(url: str) -> bytes:
+    """先 curl，失败再退回 urllib —— 两条路都走不通才算失败。"""
+    errors = []
+    if CURL:
+        print(f"[下载] curl: {CURL}")
+        try:
+            data = _download_with_curl(url)
+            print(f"[完成] {len(data)/1048576:.1f} MB")
+            return data
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"curl: {e}")
+            print("[回退] 改用 urllib 再试")
+    else:
+        print("[提示] 未找到 curl，直接使用 urllib")
+
+    print("[下载] urllib")
+    try:
+        data = _download_with_urllib(url)
+        print(f"[完成] {len(data)/1048576:.1f} MB")
+        return data
+    except Exception as e:  # noqa: BLE001
+        errors.append(f"urllib: {e}")
+
+    raise SystemExit("[失败] 两种下载方式都失败：" + "；".join(errors))
 
 
 def main() -> int:
@@ -80,7 +150,6 @@ def main() -> int:
 
     os.makedirs(OUT, exist_ok=True)
     data = download(url)
-    print(f"[完成] {len(data)/1048576:.1f} MB")
 
     if asset.endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(data)) as z:
