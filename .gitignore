@@ -43,3 +43,16 @@ desktop.ini
 .env
 .env.*
 !.env.example
+
+# 打包产物（143 MB 安装包等，不入库）
+release/
+*.blockmap
+builder-debug.yml
+latest.yml
+
+# 本地截图与调试日志
+ui*.png
+*.err
+*.out
+pack.log*
+nsis*.log*

@@ -1,0 +1,61 @@
+appId: org.panhub.app
+productName: PanHub
+copyright: Copyright © 2026 llllishuo
+
+directories:
+  output: release
+  buildResources: build
+
+# 只把构建产物和清单打进 asar
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+asar: true
+npmRebuild: false
+
+# 复用 node_modules 里已解压好的 Electron，避免 electron-builder 重新
+# 从 GitHub 下载 200+ MB 的发行包（本地已有就不必再下一遍）。
+electronDist: node_modules/electron/dist
+
+# 引擎二进制 111 MB，必须放在 asar 之外（extraResources）。
+# electron-builder 的宏是 win/mac/linux + x64，而我们的目录名是
+# windows-amd64 / darwin-arm64 / linux-amd64，因此逐平台显式映射。
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  extraResources:
+    - from: resources/sidecar/windows-amd64
+      to: sidecar/windows-amd64
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  deleteAppDataOnUninstall: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.utilities
+  extraResources:
+    - from: resources/sidecar/darwin-${arch}
+      to: sidecar/darwin-${arch}
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+  extraResources:
+    - from: resources/sidecar/linux-amd64
+      to: sidecar/linux-amd64
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}

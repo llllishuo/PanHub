@@ -27,9 +27,25 @@
 | 编排层（服务） | ✅ 已验证 | 会话目录隔离、静态加密、作业队列 |
 | 端到端闭环 | ✅ 已验证 | 引擎→存储→列表→直链→下载→哈希一致 |
 | Electron 主进程 + 界面 | ✅ 已实现 | 启停引擎、添加网盘、浏览、下载队列 |
-| 各网盘登录引导 | ❌ 未实现 | 目前需用户自己填该驱动的配置 JSON |
-| 分享链接解析 | ❌ 未实现 | |
-| 三平台安装包 | ❌ 未实现 | macOS 包必须在 macOS 上构建 |
+| 各网盘登录引导 | 🟡 部分 | 按驱动字段定义自动生成表单；OAuth/扫码引导未做 |
+| 分享链接解析 | ✅ 已验证 | 13 类网盘识别；5 类可解析（见下） |
+| 三平台安装包 | 🟡 部分 | Windows 已实测「构建→安装→启动→卸载」全通；macOS / Linux 需对应宿主 |
+
+### 分享链接：能力边界（如实标注）
+
+解析器只承诺引擎真的具备的能力。OpenList v4.2.9 只有部分网盘提供「分享」驱动：
+
+| 网盘 | 识别 | 可解析 | 说明 |
+|---|---|---|---|
+| 阿里云盘 | ✅ | ✅ `AliyundriveShare` | 仍需你自己的 `refresh_token` |
+| 115 | ✅ | ✅ `115 Share` | 需分享码 + 接收码 |
+| 123 云盘 | ✅ | ✅ `123PanShare` | 通常无需登录 |
+| PikPak | ✅ | ✅ `PikPakShare` | |
+| OneDrive | ✅ | ✅ `Onedrive Sharelink` | 直接接收完整链接 |
+| 百度 / 夸克 / UC / 迅雷 / 蓝奏 / 天翼 / 微云 / TeraBox | ✅ | ❌ | 引擎没有对应分享驱动，界面会明确说明并给出替代做法 |
+
+不支持的那 8 类**不会假装能解析**——解析结果里 `supported=false` 并附带原因，
+这是刻意的：把事情说清楚，比让用户以为能用然后失败要好。
 
 **测试证据**：38 个测试全部通过，连续 4 次运行稳定，结束后系统层面无残留子进程。
 
@@ -99,6 +115,44 @@ python scripts/fetch_engine.py
 ```
 
 产物路径：`resources/sidecar/<platform>-<arch>/openlist[.exe]`
+
+## 打包
+
+配置见 [electron-builder.yml](electron-builder.yml)。引擎二进制走 `extraResources`
+（不进 asar），因此打包后仍位于 `resources/sidecar/<platform>-<arch>/`，
+主进程在打包模式下从 `process.resourcesPath` 解析，与开发模式一致。
+
+```bash
+pnpm build                # 先产出 out/
+npx electron-builder --win   # 再打包
+```
+
+> **国内网络注意**：electron-builder 会从 GitHub 下载 NSIS / 7zip 等工具，
+> 直连常被 `ECONNRESET` 打断。设置镜像即可：
+>
+> ```bash
+> ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+> ```
+>
+> 另外配置里已设 `electronDist: node_modules/electron/dist`，
+> 复用本地已解压的 Electron，避免重复下载 200+ MB。
+
+### 构建实测（Windows 10 / x64）
+
+| 环节 | 结果 |
+|---|---|
+| `electron-builder --win --dir` | ✅ `release/win-unpacked`，asar 仅 8.6 MB（引擎未混入） |
+| 免安装版启动 | ✅ 引擎从 `resources/sidecar/...` 正常拉起 |
+| `electron-builder --win` | ✅ `PanHub-0.1.0-win-x64.exe`，143 MB |
+| 静默安装 `/S /D=...` | ✅ 退出码 0，落盘 477 MB，引擎随包 |
+| 启动已安装版本 | ✅ 引擎就绪 |
+| 静默卸载 `/S` | ✅ 退出码 0，目录清空 |
+
+**未验证的部分（需要对应宿主）**：
+- **macOS 包必须在 macOS 上构建**（签名 + 公证无法交叉编译）
+- Linux 包建议在 Linux 或 Docker 中构建
+- 未配置代码签名证书，安装包会触发 SmartScreen / Gatekeeper 提示
+- 未设置应用图标，当前使用 Electron 默认图标
 
 ### 实测记录：引擎 v4.2.9 的两个行为陷阱
 
