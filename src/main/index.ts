@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { PanhubService, EngineApiError, type JobState } from './service.ts';
+import { resolveEnginePath } from '../core/engine-path.ts';
 import { SafeStorageKeyStore } from './keystore.ts';
 
 let win: BrowserWindow | null = null;
@@ -26,18 +27,26 @@ let disposing = false;
  * 而 scripts/fetch_engine.py 用 Python 的 platform.system().lower() 得到 "windows"。
  * 两边必须统一成 "windows"，否则永远找不到文件。
  */
-function engineDirName(): string {
-  const plat = process.platform === 'win32' ? 'windows' : process.platform;
-  const arch = process.arch === 'x64' ? 'amd64' : process.arch;
-  return `${plat}-${arch}`;
-}
-
 function resolveEngineBin(): string {
-  const dir = engineDirName();
-  const name = process.platform === 'win32' ? 'openlist.exe' : 'openlist';
-  const packaged = join(process.resourcesPath, 'sidecar', dir, name);
-  const dev = join(app.getAppPath(), 'resources', 'sidecar', dir, name);
-  return existsSync(packaged) ? packaged : dev;
+  // ???????????src/core/engine-path.ts???? headless ?????
+  // ?????? Electron / Node ?????? fs ?????
+  return resolveEnginePath({
+    platform: process.platform,
+    arch: process.arch,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    exists: existsSync,
+    listDirs: (p) => {
+      try {
+        return readdirSync(p, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => e.name);
+      } catch {
+        return [];
+      }
+    },
+  });
 }
 
 function requireService(): PanhubService {

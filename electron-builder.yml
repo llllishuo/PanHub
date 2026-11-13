@@ -15,21 +15,24 @@ files:
 asar: true
 npmRebuild: false
 
-# 复用 node_modules 里已解压好的 Electron，避免 electron-builder 重新
-# 从 GitHub 下载 200+ MB 的发行包（本地已有就不必再下一遍）。
+# 复用 node_modules 里已解压好的 Electron，避免重新下载 200+ MB。
+# 注意：这也意味着**只能打宿主架构的包**——跨架构要换对应 runner。
 electronDist: node_modules/electron/dist
 
-# 引擎二进制 111 MB，必须放在 asar 之外（extraResources）。
-# electron-builder 的宏是 win/mac/linux + x64，而我们的目录名是
-# windows-amd64 / darwin-arm64 / linux-amd64，因此逐平台显式映射。
+# 引擎二进制 111 MB，必须放在 asar 之外。
+# CI 里每个 runner 只会拉取自己平台的引擎目录，因此这里整目录拷进去即可，
+# 不用去对齐 electron-builder 的 ${os}/${arch} 宏与 Node 的
+# process.platform/arch 命名差异（win vs win32、x64 vs amd64）——
+# 主进程会自己按已知命名 + 目录扫描来定位二进制。
+extraResources:
+  - from: resources/sidecar
+    to: sidecar
+
 win:
   target:
     - target: nsis
       arch: [x64]
-  extraResources:
-    - from: resources/sidecar/windows-amd64
-      to: sidecar/windows-amd64
-  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  artifactName: ${productName}-${version}-win-x64.${ext}
 
 nsis:
   oneClick: false
@@ -41,13 +44,12 @@ nsis:
   deleteAppDataOnUninstall: false
 
 mac:
+  # 不写死 arch：由 CI 的 runner 决定（macos-13 → x64，macos-14 → arm64）。
+  # 写死 [x64, arm64] 会去做跨架构打包，而 electronDist 指向本地解压的
+  # Electron 只有宿主架构，必然失败。
   target:
     - target: dmg
-      arch: [x64, arm64]
   category: public.app-category.utilities
-  extraResources:
-    - from: resources/sidecar/darwin-${arch}
-      to: sidecar/darwin-${arch}
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
 
 linux:
@@ -55,7 +57,4 @@ linux:
     - AppImage
     - deb
   category: Utility
-  extraResources:
-    - from: resources/sidecar/linux-amd64
-      to: sidecar/linux-amd64
   artifactName: ${productName}-${version}-linux-${arch}.${ext}

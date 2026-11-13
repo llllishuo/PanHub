@@ -1,0 +1,122 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # 引擎二进制 111 MB 不入库，每个 job 自行拉取
+  ENGINE_ARCH_SCRIPT: scripts/fetch_engine.py
+
+jobs:
+  # ---------------------------------------------------------------
+  # 测试：三个平台都跑。
+  # 单测里有大量路径/文件锁相关逻辑（Windows 的 EBUSY、会话目录清理），
+  # 只在 Linux 上跑会漏掉真实平台的差异。
+  # ---------------------------------------------------------------
+  test:
+    name: test / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 拉取引擎（让依赖引擎的用例真正执行）
+        shell: bash
+        run: python3 "$ENGINE_ARCH_SCRIPT" || python "$ENGINE_ARCH_SCRIPT"
+
+      - name: 运行测试
+        shell: bash
+        run: node --test --test-force-exit "test/**/*.test.ts"
+
+  # ---------------------------------------------------------------
+  # 打包：每个平台各出一个安装包。
+  # electronDist 指向本地解压的 Electron，因此只能打宿主架构的包，
+  # 所以 macOS 用两个 runner 分别出 x64 / arm64。
+  # ---------------------------------------------------------------
+  package:
+    name: package / ${{ matrix.label }}
+    needs: test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x64
+            flag: --win
+            artifacts: release/*.exe
+          - os: macos-13        # Intel
+            label: macos-x64
+            flag: --mac
+            artifacts: release/*.dmg
+          - os: macos-14        # Apple Silicon
+            label: macos-arm64
+            flag: --mac
+            artifacts: release/*.dmg
+          - os: ubuntu-latest
+            label: linux-x64
+            flag: --linux
+            artifacts: |
+              release/*.AppImage
+              release/*.deb
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 拉取引擎
+        shell: bash
+        run: python3 "$ENGINE_ARCH_SCRIPT" || python "$ENGINE_ARCH_SCRIPT"
+
+      - name: 构建应用
+        run: pnpm build
+
+      - name: 打包
+        shell: bash
+        env:
+          # 没有证书，跳过 macOS 签名探测（否则会因找不到证书而报错）
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder ${{ matrix.flag }} --publish never
+
+      - name: 产物清单
+        shell: bash
+        run: ls -lh release || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: panhub-${{ matrix.label }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14

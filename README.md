@@ -16,7 +16,8 @@
 
 ## 当前状态
 
-本仓库处于**核心层完成、界面层未开始**的阶段。为避免误导，逐项如实标注：
+本仓库的核心层、界面层与 Windows 打包链路均已实测通过；macOS / Linux 安装包由
+GitHub Actions 矩阵构建。为避免误导，逐项如实标注：
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -29,7 +30,7 @@
 | Electron 主进程 + 界面 | ✅ 已实现 | 启停引擎、添加网盘、浏览、下载队列 |
 | 各网盘登录引导 | 🟡 部分 | 按驱动字段定义自动生成表单；OAuth/扫码引导未做 |
 | 分享链接解析 | ✅ 已验证 | 13 类网盘识别；5 类可解析（见下） |
-| 三平台安装包 | 🟡 部分 | Windows 已实测「构建→安装→启动→卸载」全通；macOS / Linux 需对应宿主 |
+| 三平台安装包 | 🟡 部分 | Windows 本机实测全通；macOS / Linux 由 GitHub Actions 矩阵构建（见下） |
 
 ### 分享链接：能力边界（如实标注）
 
@@ -47,11 +48,11 @@
 不支持的那 8 类**不会假装能解析**——解析结果里 `supported=false` 并附带原因，
 这是刻意的：把事情说清楚，比让用户以为能用然后失败要好。
 
-**测试证据**：38 个测试全部通过，连续 4 次运行稳定，结束后系统层面无残留子进程。
+**测试证据**：65 个测试全部通过，连续 4 次运行稳定，结束后系统层面无残留子进程。
 
 ```bash
 pnpm install
-pnpm test        # 38 tests / 38 pass
+pnpm test        # 65 tests / 65 pass
 ```
 
 > 测试分五组：保险箱安全属性（13）、下载器真实 HTTP 分片（10）、引擎进程管理（6）、
@@ -153,6 +154,34 @@ npx electron-builder --win   # 再打包
 - Linux 包建议在 Linux 或 Docker 中构建
 - 未配置代码签名证书，安装包会触发 SmartScreen / Gatekeeper 提示
 - 未设置应用图标，当前使用 Electron 默认图标
+
+### 持续集成：三平台构建
+
+[`.github/workflows/build.yml`](.github/workflows/build.yml) 分两个阶段：
+
+1. **test** —— ubuntu / windows / macos 三平台各跑一遍全部测试。
+   这是必要的：测试里有大量路径与文件锁逻辑（Windows 的 EBUSY、会话目录清理、
+   路径分隔符），只在 Linux 上跑会漏掉真实平台差异。
+2. **package** —— 四个 runner 各出一个安装包：
+   `windows-latest`(x64) / `macos-13`(x64) / `macos-14`(arm64) / `ubuntu-latest`(x64)，
+   产物作为 artifact 上传。
+
+macOS 分两个 runner，是因为配置里 `electronDist` 指向本地解压的 Electron，
+只能打宿主架构的包——写死 `arch: [x64, arm64]` 会去做跨架构打包然后失败。
+
+引擎二进制不入库，CI 里每台机器都先跑 `scripts/fetch_engine.py` 自己拉。
+
+#### 为什么引擎路径解析值得单独写测试
+
+Node 的 `process.platform`、Python 的 `platform.system()`、electron-builder 的
+`${os}` / `${arch}`、OpenList 发行包的架构名，**四套命名互不一致**
+（`win32`/`windows`/`win`、`x64`/`amd64`）。任何一处对不上，表现都是
+「应用启动后引擎永远找不到」。
+
+因此解析逻辑被抽成纯函数 [`src/core/engine-path.ts`](src/core/engine-path.ts)，
+依赖通过参数注入，11 个用例在 Windows 上就能验证 macOS / Linux 的目录布局。
+写测试时它立刻抓到一个真 bug：拼接路径时硬编码了 `\`，在 macOS/Linux 上会拼出
+`/app/resources\sidecar\openlist` 这种不存在的路径——引擎必然起不来。
 
 ### 实测记录：引擎 v4.2.9 的两个行为陷阱
 
