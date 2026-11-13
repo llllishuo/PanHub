@@ -83,6 +83,18 @@ jobs:
         shell: bash
         run: node --test --test-force-exit "test/**/*.test.ts"
 
+      # 把已下载的引擎作为 artifact 传给打包阶段。
+      # 打包 job 里从 GitHub Releases 重新下载在 Windows runner 上连续失败，
+      # 而同一份文件在 test job 里是下得下来的 —— 用 artifact 传过去最稳。
+      - name: 上传引擎（供打包复用）
+        if: hashFiles('resources/sidecar/**') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-${{ runner.os }}
+          path: resources/sidecar
+          retention-days: 1
+          if-no-files-found: ignore
+
   # ---------------------------------------------------------------
   # 打包：每个平台各出安装包。
   #
@@ -149,16 +161,24 @@ jobs:
           path: resources/sidecar
           key: engine-${{ env.ENGINE_VERSION }}-${{ runner.os }}-${{ runner.arch }}
 
+      # 优先复用测试阶段下载好的引擎（同一次 run 内的 artifact，稳定）
+      - name: 取回测试阶段的引擎
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: engine-${{ runner.os }}
+          path: resources/sidecar
+
       # 打包必须要有引擎：缺了会打出一个跑不起来的安装包，所以这一步不允许失败
       - name: 拉取引擎
         shell: bash
         run: |
           if ls resources/sidecar/*/openlist* >/dev/null 2>&1; then
-            echo "缓存命中，跳过下载"; exit 0
+            echo "已有引擎，跳过下载"; exit 0
           fi
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             python "$ENGINE_ARCH_SCRIPT" && exit 0
-            echo "第 $i 次失败，10 秒后重试"; sleep 10
+            echo "第 $i 次失败，15 秒后重试"; sleep 15
           done
           exit 1
 
